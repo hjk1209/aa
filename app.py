@@ -19,7 +19,10 @@ except locale.Error:
 app = Flask(__name__)
 # --- CORREÇÃO DE CORS (para Render/Netlify) ---
 origins = [
-    "guia-kaibora.netlify.app" # Apenas o seu site Netlify
+    "https://guia-kaibora.netlify.app", # O seu site Netlify
+    "http://127.0.0.1:5500",
+    "http://127.0.0.1:5501",
+    "null" # Para testes locais (abrir o ficheiro diretamente)
 ]
 CORS(app, origins=origins, supports_credentials=True)
 
@@ -127,6 +130,7 @@ class NPC(db.Model):
             "id": self.id, "nome": self.nome, "descricao": self.descricao,
             "localizacao_atual": self.localizacao_atual
         }
+# --- NOVO MODELO: PRODUÇÃO (Crafting) ---
 class Receita(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome_item_final = db.Column(db.String(100), nullable=False)
@@ -140,7 +144,6 @@ class Receita(db.Model):
         }
 
 # --- FUNÇÕES HELPER ---
-# (get_lista_nomes_jogadores, calcular_atribuicao, adicionar_informe, calcular_xp_necessario, verificar_level_up, adicionar_alerta_global - Sem alterações)
 def get_lista_nomes_jogadores():
     try:
         aventureiros = Aventureiro.query.all()
@@ -190,7 +193,6 @@ def adicionar_alerta_global(texto):
         ALERTAS_DB.pop()
 
 # --- ROTAS DE AUTENTICAÇÃO ---
-# (POST /api/register, POST /api/login - Sem alterações)
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.json
@@ -223,7 +225,6 @@ def login():
     return jsonify(access_token=access_token)
 
 # --- ROTAS DO APP DO JOGADOR (kaibora.html) ---
-# (GET /api/tarefas, /api/alertas, /api/cronogramas, /api/time, /api/status/eventos - Sem alterações)
 @app.route('/api/tarefas', methods=['GET'])
 @jwt_required()
 def get_tarefas(): return jsonify([tarefa.to_dict() for tarefa in Tarefa.query.all()])
@@ -244,7 +245,6 @@ def get_current_events():
     agora = datetime.now()
     eventos_db = Cronograma.query.filter_by(hora=agora.hour, minuto=agora.minute).all()
     return jsonify([evento.texto for evento in eventos_db])
-# (GET /api/rodizio/meu-horario, /api/aventureiro/status, /api/informes, /api/aventureiros/lista - Sem alterações)
 @app.route('/api/rodizio/meu-horario', methods=['GET'])
 @jwt_required()
 def get_meu_rodizio_horario():
@@ -282,7 +282,6 @@ def get_lista_aventureiros_ativos():
     aventureiros = Aventureiro.query.filter(Aventureiro.nome_aventureiro != nome_logado).all()
     nomes = [a.nome_aventureiro for a in aventureiros]
     return jsonify(nomes)
-# (POST /api/transferir, GET/POST /api/chat, POST /api/aventureiro/backup - Sem alterações)
 @app.route('/api/transferir', methods=['POST'])
 @jwt_required()
 def transferir_kaicons():
@@ -339,7 +338,6 @@ def backup_arquivos():
     except Exception as e:
         db.session.rollback()
         return jsonify({"erro": str(e)}), 500
-# (GET /api/loja-itens, POST /api/loja/comprar/<id> - Sem alterações)
 @app.route('/api/loja-itens', methods=['GET'])
 @jwt_required() 
 def get_loja_itens_jogador():
@@ -374,7 +372,6 @@ def comprar_item_loja(id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"erro": str(e)}), 500
-# (GET /api/mapa/esbocos, POST /api/mapa/esboco, POST /api/aventureiro/localizacao - Sem alterações)
 @app.route('/api/mapa/esbocos', methods=['GET'])
 def get_esbocos():
     esbocos_db = EsbocoMapa.query.order_by(EsbocoMapa.timestamp.desc()).limit(20).all()
@@ -415,13 +412,13 @@ def set_localizacao():
         
 # --- ROTAS DE PRODUÇÃO (JOGADOR) ---
 @app.route('/api/receitas', methods=['GET'])
-@jwt_required() # <-- ATUALIZADO: Protegido por Login
+@jwt_required()
 def get_receitas_jogador():
     receitas = Receita.query.order_by(Receita.nome_item_final).all()
     return jsonify([r.to_dict() for r in receitas])
 
 @app.route('/api/produzir/<int:id_receita>', methods=['POST'])
-@jwt_required() # <-- NOVO
+@jwt_required()
 def produzir_item(id_receita):
     # 1. Identifica o jogador e a receita
     nome_jogador = get_jwt_identity()
@@ -463,7 +460,6 @@ def produzir_item(id_receita):
         
         db.session.commit()
         
-        # Retorna o status atualizado do aventureiro
         return jsonify(jogador.to_dict()), 200
         
     except Exception as e:
@@ -848,9 +844,9 @@ def get_mapa_localizacoes():
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
-# --- ROTAS DE GERENCIAMENTO DE PRODUÇÃO (GM) ---
+# --- NOVAS ROTAS: GERENCIAMENTO DE PRODUÇÃO (GM) ---
 @app.route('/api/receitas', methods=['GET'])
-@jwt_required()
+@jwt_required() # Protegido para GM e Jogador
 def get_receitas():
     receitas = Receita.query.order_by(Receita.nome_item_final).all()
     return jsonify([r.to_dict() for r in receitas])
@@ -866,10 +862,9 @@ def add_receita():
         if not nome_item_final or not ingredientes_json:
             return jsonify({"erro": "Nome do item e ingredientes (JSON) são obrigatórios."}), 400
         try:
-            # Testa se o JSON é válido
             json.loads(ingredientes_json)
         except json.JSONDecodeError:
-            return jsonify({"erro": "Formato de Ingredientes JSON inválido. Use {'item1': 1, 'item2': 2}"}), 400
+            return jsonify({"erro": "Formato de Ingredientes JSON inválido."}), 400
             
         nova_receita = Receita(
             nome_item_final=nome_item_final.strip().lower(),
@@ -977,8 +972,4 @@ if __name__ == '__main__':
     print("Servidor do Mestre Kaibora iniciado.")
     print(f"Banco de dados está em: {os.path.join(base_dir, 'kaibora.db')}")
     print("Acesse o painel do GM em: http://127.0.0.1:5000/gm")
-
     app.run(debug=True, port=5000)
-
-
-
